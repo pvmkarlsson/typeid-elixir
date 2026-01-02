@@ -540,16 +540,7 @@ defmodule TypeID do
     :ok
   end
 
-  # Check if Ecto is actually compiled and available
-  # We need to verify the beam file exists, not just that it's in the dep graph
-  ecto_available? =
-    case :code.which(Ecto.ParameterizedType) do
-      :non_existing -> false
-      path when is_list(path) -> true
-      _ -> false
-    end
-
-  if ecto_available? do
+  if Code.ensure_loaded?(Ecto.ParameterizedType) do
     use Ecto.ParameterizedType
 
     @impl Ecto.ParameterizedType
