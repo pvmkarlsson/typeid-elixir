@@ -540,10 +540,8 @@ defmodule TypeID do
     :ok
   end
 
-  # Check if Ecto is actually available by verifying the module exports the expected function
-  ecto_available? =
-    Code.ensure_loaded?(Ecto.ParameterizedType) and
-      function_exported?(Ecto.ParameterizedType, :__using__, 1)
+  # Check if Ecto application is actually available as a dependency
+  ecto_available? = Application.spec(:ecto) != nil
 
   if ecto_available? do
     use Ecto.ParameterizedType
