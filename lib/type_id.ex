@@ -540,7 +540,7 @@ defmodule TypeID do
     :ok
   end
 
-  if Code.ensure_loaded?(Ecto.ParameterizedType) do
+  if match?({:module, _}, Code.ensure_compiled(Ecto.ParameterizedType)) do
     use Ecto.ParameterizedType
 
     @impl Ecto.ParameterizedType
