@@ -540,7 +540,12 @@ defmodule TypeID do
     :ok
   end
 
-  if match?({:module, _}, Code.ensure_compiled(Ecto.ParameterizedType)) do
+  # Check if Ecto is actually available by verifying the module exports the expected function
+  ecto_available? =
+    Code.ensure_loaded?(Ecto.ParameterizedType) and
+      function_exported?(Ecto.ParameterizedType, :__using__, 1)
+
+  if ecto_available? do
     use Ecto.ParameterizedType
 
     @impl Ecto.ParameterizedType
