@@ -8,14 +8,44 @@ defmodule TypeID do
   defstruct @enforce_keys
 
   @typedoc """
-  An internal struct representing a `TypeID`.
+  A TypeID struct containing a prefix and base32-encoded suffix.
+
+  The struct fields are accessible for pattern matching:
+
+      case tid do
+        %TypeID{prefix: "user"} -> handle_user(tid)
+        %TypeID{prefix: "post"} -> handle_post(tid)
+      end
+
+  However, use constructor functions (`new/1`, `from_string/1`, etc.) to create
+  TypeIDs, as they perform validation.
   """
-  @opaque t() :: %__MODULE__{
-            prefix: String.t(),
-            suffix: String.t()
-          }
+  @type t() :: %__MODULE__{
+          prefix: String.t(),
+          suffix: String.t()
+        }
 
   @seperator ?_
+  @zero_suffix "00000000000000000000000000"
+
+  # ============================================================================
+  # Guards
+  # ============================================================================
+
+  @doc """
+  Guard clause to check if a term is a TypeID struct.
+
+  ## Example
+
+      defmodule MyApp.Handler do
+        import TypeID, only: [is_typeid: 1]
+
+        def process(id) when is_typeid(id), do: TypeID.prefix(id)
+        def process(id) when is_binary(id), do: id |> TypeID.from_string!() |> process()
+      end
+
+  """
+  defguard is_typeid(term) when is_struct(term, TypeID)
 
   @doc """
   Generates a new `t:t/0` with the given prefix.
@@ -38,6 +68,29 @@ defmodule TypeID do
 
     %__MODULE__{prefix: prefix, suffix: suffix}
   end
+
+  @doc """
+  Creates a TypeID with the zero suffix (all zeros in the UUID portion).
+
+  Useful for creating placeholder or sentinel TypeIDs.
+
+  ## Examples
+
+      iex> TypeID.zero()
+      #TypeID<"00000000000000000000000000">
+
+      iex> TypeID.zero("user")
+      #TypeID<"user_00000000000000000000000000">
+
+  """
+  @spec zero(String.t()) :: t()
+  def zero(prefix \\ "") do
+    %__MODULE__{prefix: prefix, suffix: @zero_suffix}
+  end
+
+  # ============================================================================
+  # Accessors
+  # ============================================================================
 
   @doc """
   Returns the prefix of the given `t:t/0`.
@@ -68,6 +121,144 @@ defmodule TypeID do
   def suffix(%__MODULE__{suffix: suffix}) do
     suffix
   end
+
+  @doc """
+  Returns the zero suffix constant: `"00000000000000000000000000"`
+  """
+  @spec zero_suffix() :: String.t()
+  def zero_suffix, do: @zero_suffix
+
+  # ============================================================================
+  # Predicates
+  # ============================================================================
+
+  @doc """
+  Returns `true` if the TypeID has a non-zero suffix.
+
+  ## Examples
+
+      iex> TypeID.has_suffix?(TypeID.zero("user"))
+      false
+
+      iex> TypeID.has_suffix?(TypeID.new("user"))
+      true
+
+  """
+  @spec has_suffix?(t()) :: boolean()
+  def has_suffix?(%__MODULE__{suffix: @zero_suffix}), do: false
+  def has_suffix?(%__MODULE__{}), do: true
+
+  @doc """
+  Returns `true` if the TypeID is completely zero (empty prefix AND zero suffix).
+
+  ## Examples
+
+      iex> TypeID.is_zero?(TypeID.zero())
+      true
+
+      iex> TypeID.is_zero?(TypeID.zero("user"))
+      false
+
+      iex> TypeID.is_zero?(TypeID.new("user"))
+      false
+
+  """
+  @spec is_zero?(t()) :: boolean()
+  def is_zero?(%__MODULE__{prefix: "", suffix: @zero_suffix}), do: true
+  def is_zero?(%__MODULE__{}), do: false
+
+  @doc """
+  Returns `true` if the TypeID has the given prefix.
+
+  ## Examples
+
+      iex> tid = TypeID.from_string!("user_01h45y0sxkfmntta78gqs1vsw6")
+      iex> TypeID.has_prefix?(tid, "user")
+      true
+      iex> TypeID.has_prefix?(tid, "post")
+      false
+
+  """
+  @spec has_prefix?(t(), String.t()) :: boolean()
+  def has_prefix?(%__MODULE__{prefix: prefix}, expected), do: prefix == expected
+
+  @doc """
+  Returns `true` if the value is a valid TypeID.
+
+  ## Examples
+
+      iex> TypeID.valid?("user_01h45y0sxkfmntta78gqs1vsw6")
+      true
+
+      iex> TypeID.valid?("invalid")
+      false
+
+      iex> TypeID.valid?(TypeID.new("user"))
+      true
+
+  """
+  @spec valid?(t() | String.t() | any()) :: boolean()
+  def valid?(%__MODULE__{}), do: true
+  def valid?(str) when is_binary(str), do: match?({:ok, _}, from_string(str))
+  def valid?(_), do: false
+
+  @doc """
+  Returns `true` if the string is a valid TypeID with the expected prefix.
+
+  ## Examples
+
+      iex> TypeID.valid?("user_01h45y0sxkfmntta78gqs1vsw6", "user")
+      true
+
+      iex> TypeID.valid?("post_01h45y0sxkfmntta78gqs1vsw6", "user")
+      false
+
+  """
+  @spec valid?(String.t(), String.t()) :: boolean()
+  def valid?(str, expected_prefix) when is_binary(str) and is_binary(expected_prefix) do
+    match?({:ok, _}, from_string(str, expected_prefix))
+  end
+
+  # ============================================================================
+  # Comparison
+  # ============================================================================
+
+  @doc """
+  Compares two TypeIDs for sorting.
+
+  TypeIDs are compared first by prefix (alphabetically), then by suffix.
+  Since suffixes encode UUIDv7, same-prefix TypeIDs sort chronologically.
+
+  ## Examples
+
+      iex> tid1 = TypeID.from_string!("user_01h45y0sxkfmntta78gqs1vsw6")
+      iex> tid2 = TypeID.from_string!("user_01h45y0sxkfmntta78gqs1vsw7")
+      iex> TypeID.compare(tid1, tid2)
+      :lt
+
+  ## Sorting
+
+      Enum.sort(type_ids, TypeID)
+      Enum.sort(type_ids, {:desc, TypeID})
+      Enum.min(type_ids, TypeID)
+      Enum.max(type_ids, TypeID)
+
+  """
+  @spec compare(t(), t()) :: :lt | :eq | :gt
+  def compare(%__MODULE__{prefix: p, suffix: s1}, %__MODULE__{prefix: p, suffix: s2}) do
+    cond do
+      s1 < s2 -> :lt
+      s1 > s2 -> :gt
+      true -> :eq
+    end
+  end
+
+  def compare(%__MODULE__{prefix: p1}, %__MODULE__{prefix: p2}) when p1 < p2, do: :lt
+  def compare(%__MODULE__{prefix: p1}, %__MODULE__{prefix: p2}) when p1 > p2, do: :gt
+
+  # ============================================================================
+  # Serialization
+  # ============================================================================
 
   @doc """
   Returns an `t:iodata/0` representation of the given `t:t/0`.
@@ -211,6 +402,63 @@ defmodule TypeID do
   end
 
   @doc """
+  Like `from_string!/1` but also validates that the prefix matches.
+
+  This is the recommended way to parse TypeIDs from external sources.
+
+  ## Examples
+
+      iex> TypeID.from_string!("user_01h45y0sxkfmntta78gqs1vsw6", "user")
+      #TypeID<"user_01h45y0sxkfmntta78gqs1vsw6">
+
+      iex> TypeID.from_string!("post_01h45y0sxkfmntta78gqs1vsw6", "user")
+      ** (ArgumentError) prefix mismatch: expected "user", got "post"
+
+  ## Use Case: PubSub
+
+      def handle_info(%Broadcast{topic: "users:" <> id}, socket) do
+        user_id = TypeID.from_string!(id, "user")
+        {:noreply, assign(socket, :user, load_user(user_id))}
+      end
+
+  """
+  @spec from_string!(String.t(), String.t()) :: t() | no_return()
+  def from_string!(str, expected_prefix) when is_binary(str) and is_binary(expected_prefix) do
+    tid = from_string!(str)
+
+    if tid.prefix != expected_prefix do
+      raise ArgumentError,
+        "prefix mismatch: expected #{inspect(expected_prefix)}, got #{inspect(tid.prefix)}"
+    end
+
+    tid
+  end
+
+  @doc """
+  Parses a TypeID from a string, validating that the prefix matches.
+
+  Returns `{:ok, typeid}` if valid and prefix matches, `:error` otherwise.
+
+  ## Examples
+
+      iex> {:ok, tid} = TypeID.from_string("user_01h45y0sxkfmntta78gqs1vsw6", "user")
+      iex> TypeID.prefix(tid)
+      "user"
+
+      iex> TypeID.from_string("post_01h45y0sxkfmntta78gqs1vsw6", "user")
+      :error
+
+  """
+  @spec from_string(String.t(), String.t()) :: {:ok, t()} | :error
+  def from_string(str, expected_prefix) when is_binary(str) and is_binary(expected_prefix) do
+    case from_string(str) do
+      {:ok, %__MODULE__{prefix: ^expected_prefix} = tid} -> {:ok, tid}
+      {:ok, _} -> :error
+      :error -> :error
+    end
+  end
+
+  @doc """
   Like `from_uuid/2` but raises an error if the `prefix` or `uuid` are invalid.
   """
   @spec from_uuid!(prefix :: String.t(), uuid :: String.t()) :: t() | no_return()
@@ -341,6 +589,13 @@ end
 
 if Code.ensure_loaded?(Jason.Encoder) do
   defimpl Jason.Encoder, for: TypeID do
+    def encode(tid, _opts), do: [?", TypeID.to_iodata(tid), ?"]
+  end
+end
+
+# Elixir 1.18+ native JSON support
+if Code.ensure_loaded?(JSON.Encoder) do
+  defimpl JSON.Encoder, for: TypeID do
     def encode(tid, _opts), do: [?", TypeID.to_iodata(tid), ?"]
   end
 end
